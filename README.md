@@ -17,7 +17,7 @@ Komplexní, česky komunikující Discord bot navržený pro osobní produktivit
 
 1. Naklonování repozitáře
 ```bash
-git clone https://github.com/RGLIHO/receptionist-bot.git
+git clone https://github.com/RGLIHO/discord-receptionist-bot.git
 cd receptionist-bot
 ```
 
