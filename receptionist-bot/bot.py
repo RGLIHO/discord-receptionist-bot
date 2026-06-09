@@ -34,7 +34,7 @@ TLUMENI_FILE = "tlumeni.json"
 OFFLINE_FILE = "offline.json"
 INBOX_FILE = "inbox.json"
 PRIPOMINKY_FILE = "pripominky.json"
-COORDS_FILE = "coords.json"  # Nový soubor pro Minecraft
+COORDS_FILE = "coords.json"
 LOG_LEVEL = logging.INFO
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger("recepcni_bot")
@@ -52,7 +52,6 @@ if RECIPIENTS_RAW:
         logger.error("⚠️ Chyba při parsování RECIPIENTS z .env. Používám výchozí nastavení.")
         RECIPIENTS = {OWNER_NAME: OWNER_ID}
 else:
-    # Tady se uplatní tvůj nápad! Dynamicky se vytvoří {"TvůjNick": TvojeID}
     RECIPIENTS = {OWNER_NAME: OWNER_ID}
 
 BOT_START_TIME = datetime.datetime.now(datetime.timezone.utc)
@@ -257,9 +256,6 @@ async def posli_ukoly(user: discord.User):
         else:
             stav = f"📌 Zbývá {dny_zbyva} dní (do {u['deadline']})"
 
-        embed.add_field(name=f"**{u.get('predmet', 'Nezařazeno')}** – {u.get('ukol', '(bez popisu)')}", value=stav,
-                        inline=False)
-
     embed.set_footer(text="💡 K ovládání úkolů použij příkazy /hotovo, /smaz nebo /pridej.")
     try:
         await user.send(embed=embed)
@@ -375,19 +371,28 @@ class TydenniKalendarView(discord.ui.View):
 
 
 # ---------- MODALY (Formuláře Recepce & Úkoly) ----------
-class SchuzkaModal(Modal, title='Žádost o schůzku / hovor'):
-    tema = TextInput(label='Téma schůzky / hovoru', placeholder='O čem se budeme bavit?', max_length=100)
-    termin = TextInput(label='Navrhovaný termín', placeholder='Kdy se ti to hodí? (např. Zítra v 16:00)',
-                       max_length=100)
-    detail = TextInput(label='Další detaily', style=discord.TextStyle.paragraph, required=False, max_length=1000)
+class SchuzkaModal(Modal):
+    def __init__(self, target_id: int, target_name: str):
+        super().__init__(title=f"Žádost o schůzku ({target_name})")
+        self.target_id = target_id
+        self.target_name = target_name
+
+        self.tema = TextInput(label='Téma schůzky / hovoru', placeholder='O čem se budeme bavit?', max_length=100)
+        self.termin = TextInput(label='Navrhovaný termín', placeholder='Kdy se ti to hodí? (např. Zítra v 16:00)', max_length=100)
+        self.detail = TextInput(label='Další detaily', style=discord.TextStyle.paragraph, required=False, max_length=1000)
+
+        self.add_item(self.tema)
+        self.add_item(self.termin)
+        self.add_item(self.detail)
 
     async def on_submit(self, interaction: discord.Interaction):
         now = datetime.datetime.utcnow().isoformat()
         zprava = f"🤝 **ŽÁDOST O SCHŮZKU**\n• **Téma:** {self.tema.value}\n• **Termín:** {self.termin.value}\n• **Detaily:** {self.detail.value or 'Bez detailů'}"
 
-        if str(OWNER_ID) not in inbox_dict:
-            inbox_dict[str(OWNER_ID)] = []
-        inbox_dict[str(OWNER_ID)].append({
+        target_key = str(self.target_id)
+        if target_key not in inbox_dict:
+            inbox_dict[target_key] = []
+        inbox_dict[target_key].append({
             "from_id": interaction.user.id,
             "from_name": interaction.user.display_name,
             "text": zprava,
@@ -397,13 +402,13 @@ class SchuzkaModal(Modal, title='Žádost o schůzku / hovor'):
         uloz_inbox()
 
         try:
-            owner = await bot.fetch_user(OWNER_ID)
-            await owner.send(
+            target_user = await bot.fetch_user(self.target_id)
+            await target_user.send(
                 f"🛎️ **CINK!** Nová žádost o schůzku od {interaction.user.mention}!\nZkontroluj si `/inbox`.")
         except Exception:
             pass
 
-        await interaction.response.send_message("✅ Recepční zapsal tvou žádost o schůzku. Brzy se ti ozveme!",
+        await interaction.response.send_message(f"✅ Recepční zapsal tvou žádost o schůzku s uživatelem **{self.target_name}**. Brzy se ti ozve!",
                                                 ephemeral=True)
 
 
@@ -427,7 +432,8 @@ class ReplyModal(discord.ui.Modal, title='Odpověď na zprávu'):
             await target.send(
                 f"✉️ Odpověď od uživatele **{interaction.user.display_name}**:\n\n{self.reply_text.value}")
 
-            for m in inbox_dict.get(str(OWNER_ID), []):
+            user_key = str(interaction.user.id)
+            for m in inbox_dict.get(user_key, []):
                 if m["from_id"] == self.target_id and not m.get("owner_reply"):
                     m["owner_reply"] = True
                     m["reply_text"] = self.reply_text.value
@@ -449,7 +455,7 @@ class SingleReplyView(discord.ui.View):
 
     @discord.ui.button(label="Odpovědět", style=discord.ButtonStyle.success, emoji="✉️")
     async def reply_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != OWNER_ID:
+        if interaction.user.id not in RECIPIENTS.values():
             return await interaction.response.send_message("❌ Nemáš oprávnění.", ephemeral=True)
 
         await interaction.response.send_modal(ReplyModal(self.target_id, self.target_name))
@@ -864,10 +870,11 @@ async def posli_slash(interaction: discord.Interaction):
 
 @bot.tree.command(name="inbox", description="Zobrazí nové doručené zprávy v recepci a umožní na ně odpovědět.")
 async def inbox_slash(interaction: discord.Interaction):
-    if interaction.user.id != OWNER_ID:
+    if interaction.user.id not in RECIPIENTS.values():
         return await interaction.response.send_message("❌ Nemáš oprávnění k tomuto příkazu.", ephemeral=True)
 
-    msgs = inbox_dict.get(str(OWNER_ID), [])
+    user_key = str(interaction.user.id)
+    msgs = inbox_dict.get(user_key, [])
 
     new_msgs_by_user = {}
     for m in msgs:
@@ -962,26 +969,49 @@ async def kalendar_tyden_slash(interaction: discord.Interaction):
                                                 ephemeral=True)
 
 
-@bot.tree.command(name="zazvonit", description="Pomyslný zvonek na recepci. Upozorní mě, že na mě čekáš.")
+@bot.tree.command(name="zazvonit", description="Pomyslný zvonek na recepci. Upozorní vybraného člena, že na něj čekáš.")
 async def zazvonit_slash(interaction: discord.Interaction):
-    try:
-        owner = await bot.fetch_user(OWNER_ID)
-        embed = discord.Embed(
-            title="🛎️ Někdo zvoní na recepci!",
-            description=f"Uživatel **{interaction.user.mention}** ({interaction.user.display_name}) tě právě shání na serveru.",
-            color=discord.Color.red(),
-            timestamp=datetime.datetime.utcnow()
-        )
-        await owner.send(embed=embed)
-        await interaction.response.send_message("🛎️ *Cink cink!* Zazvonil jsi. Zpráva byla doručena majiteli.",
-                                                ephemeral=True)
-    except Exception:
-        await interaction.response.send_message("❌ Recepční zvonek je momentálně rozbitý (nedoručeno).", ephemeral=True)
+    options = [discord.SelectOption(label=name, value=str(uid)) for name, uid in RECIPIENTS.items()]
+    select = Select(placeholder="Na koho chceš zazvonit?", options=options)
+
+    async def cb(inter: discord.Interaction):
+        if inter.user.id != interaction.user.id: return
+        target_uid = int(select.values[0])
+        name = next(n for n, u in RECIPIENTS.items() if u == target_uid)
+        try:
+            target_user = await bot.fetch_user(target_uid)
+            embed = discord.Embed(
+                title="🛎️ Někdo zvoní na recepci!",
+                description=f"Uživatel **{interaction.user.mention}** ({interaction.user.display_name}) tě právě shání na serveru.",
+                color=discord.Color.red(),
+                timestamp=datetime.datetime.utcnow()
+            )
+            await target_user.send(embed=embed)
+            await inter.response.edit_message(content=f"🛎️ *Cink cink!* Zazvonil jsi na uživatele **{name}**. Zpráva byla doručena.", view=None)
+        except Exception:
+            await inter.response.edit_message(content=f"❌ Recepční zvonek pro uživatele **{name}** je momentálně rozbitý (nedoručeno).", view=None)
+
+    select.callback = cb
+    v = View()
+    v.add_item(select)
+    await interaction.response.send_message("Vyber, na koho chceš zazvonit:", view=v, ephemeral=True)
 
 
-@bot.tree.command(name="schuzka", description="Otevře formulář pro sjednání hovoru nebo schůzky.")
+@bot.tree.command(name="schuzka", description="Otevře formulář pro sjednání hovoru nebo schůzky s vybraným členem.")
 async def schuzka_slash(interaction: discord.Interaction):
-    await interaction.response.send_modal(SchuzkaModal())
+    options = [discord.SelectOption(label=name, value=str(uid)) for name, uid in RECIPIENTS.items()]
+    select = Select(placeholder="S kým si chceš sjednat schůzku?", options=options)
+
+    async def cb(inter: discord.Interaction):
+        if inter.user.id != interaction.user.id: return
+        target_uid = int(select.values[0])
+        name = next(n for n, u in RECIPIENTS.items() if u == target_uid)
+        await inter.response.send_modal(SchuzkaModal(target_uid, name))
+
+    select.callback = cb
+    v = View()
+    v.add_item(select)
+    await interaction.response.send_message("Vyber člena pro sjednání schůzky:", view=v, ephemeral=True)
 
 
 @bot.tree.command(name="vizitka", description="Recepční ti předá mou vizitku s kontakty a užitečnými odkazy.")
@@ -1055,7 +1085,7 @@ async def help_slash(interaction: discord.Interaction):
                     value="`/kalendar` – Přehledný měsíční kalendář v chatu s dneškem\n`/kalendar_tyden` – Interaktivní rozhraní kalendáře do DM\n`/pripomen` – Spolehlivá perzistentní připomínka v čase HH:MM",
                     inline=False)
     embed.add_field(name="🔒 Recepce a profily",
-                    value="`/zazvonit` – Virtuální zvonek na recepci (upozorní majitele)\n`/schuzka` – Sjednání schůzky/hovoru přes formulář\n`/vizitka` – Kontaktní údaje majitele bota\n`/offline` – Zapne/vypne automatickou omluvenku\n`/posli` – Odeslání zprávy přes okno (Modal)\n`/inbox` – Správce doručených zpráv (pro majitele)",
+                    value="`/zazvonit` – Virtuální zvonek na recepci (upozorní vybraného člena)\n`/schuzka` – Sjednání schůzky/hovoru přes formulář\n`/vizitka` – Kontaktní údaje majitele bota\n`/offline` – Zapne/vypne automatickou omluvenku\n`/posli` – Odeslání zprávy přes okno (Modal)\n`/inbox` – Správce doručených zpráv (pro příjemce)",
                     inline=False)
     embed.add_field(name="📊 Monitoring & Projekty",
                     value="`/workload` – Výpočet vytížení, trendy a graf v PNG\n`/system` – Diagnostika chodu bota a ping\n`/rgliho` a `/sluzby` – Rychlé odkazy na weby, matrix a CAD\n`/mc_pozice` – Rychlé uložení MC souřadnic\n`/party` – Založení chráněné hlasové místnosti",
@@ -1063,7 +1093,7 @@ async def help_slash(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="party", description="Založí izolovanou hlasovou místnost a rozešle pozvánky přátelům.")
+@bot.tree.command(name="party", description="Založení izolované hlasové místnosti a rozešle pozvánky přátelům.")
 @app_commands.describe(friend1="První přítel", friend2="Druhý přítel (volitelně)", friend3="Třetí přítel (volitelně)")
 async def party(interaction: discord.Interaction, friend1: str, friend2: str = None, friend3: str = None):
     member, guild = interaction.user, interaction.guild
