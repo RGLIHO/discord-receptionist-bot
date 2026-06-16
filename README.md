@@ -63,7 +63,7 @@ Bot kompletně využívá moderní Discord Slash příkazy.
 
 ### 1. Naklonování repozitáře
 ```bash
-git clone [https://github.com/RGLIHO/discord-receptionist-bot.git](https://github.com/RGLIHO/discord-receptionist-bot.git)
+git clone https://github.com/RGLIHO/discord-receptionist-bot.git
 cd discord-receptionist-bot\receptionist-bot
 
 ```
