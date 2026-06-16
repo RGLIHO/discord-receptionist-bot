@@ -70,8 +70,6 @@ cd discord-receptionist-bot\receptionist-bot
 
 ### 2. Instalace závislostí
 
-*Ujisti se, že máš nainstalovaný `aiosqlite` (zahrnuto v requirements.txt).*
-
 ```bash
 pip install -r requirements.txt
 
@@ -79,7 +77,7 @@ pip install -r requirements.txt
 
 ### 3. Konfigurace
 
-Přejmenuj soubor `.env.example` na `.env` a doplň svůj **Discord token** a **Owner ID**.
+Přejmenuj soubor `.env.example` na `.env` a doplň svůj **Discord token** a **Owner ID** a **Owner Name**.
 
 ### 4. Spuštění
 
